@@ -1,0 +1,1 @@
+# sanechka_moex_trader
