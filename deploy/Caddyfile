@@ -1,0 +1,20 @@
+# Обратный прокси с автоматическим HTTPS (Let's Encrypt). Домен — из переменной DOMAIN в .env.
+{$DOMAIN} {
+	encode zstd gzip
+
+	header {
+		# HSTS: браузер ходит только по HTTPS (Caddy знает, что соединение защищено)
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		-Server
+	}
+
+	# Загрузка отчётов брокера — до 10 МБ (+ запас на multipart)
+	request_body {
+		max_size 12MB
+	}
+
+	reverse_proxy web:3000 {
+		health_uri /api/health
+		health_interval 30s
+	}
+}

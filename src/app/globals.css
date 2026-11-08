@@ -1,0 +1,150 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --radius: 0.625rem;
+  --background: oklch(0.985 0.002 250);
+  --foreground: oklch(0.18 0.01 260);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.18 0.01 260);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.18 0.01 260);
+  --primary: oklch(0.5 0.17 260);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.955 0.005 260);
+  --secondary-foreground: oklch(0.25 0.01 260);
+  --muted: oklch(0.955 0.005 260);
+  --muted-foreground: oklch(0.5 0.015 260);
+  --accent: oklch(0.945 0.012 260);
+  --accent-foreground: oklch(0.25 0.01 260);
+  --destructive: oklch(0.577 0.22 27);
+  --border: oklch(0.91 0.006 260);
+  --input: oklch(0.91 0.006 260);
+  --ring: oklch(0.5 0.17 260);
+  /*
+   * Прибыль / убыток. Два набора:
+   *  - --chart-* — заливки графиков; пара проверена на различимость при дальтонизме
+   *    (валидатор палитры: CVD ΔE 10.0, контраст ≥ 3:1 к фону);
+   *  - --profit / --loss — текст и акценты, контраст ≥ 4.5:1 (5.8–6.2 к белому).
+   * Цвет никогда не единственный признак: у сумм всегда знак «+» / «−».
+   */
+  --chart-profit: oklch(0.52 0.14 180);
+  --chart-loss: oklch(0.62 0.19 40);
+  --chart-neutral: oklch(0.93 0.004 260);
+  --chart-grid: oklch(0.92 0.004 260);
+  --profit: oklch(0.47 0.11 175);
+  --loss: oklch(0.53 0.18 35);
+}
+
+.dark {
+  --background: oklch(0.16 0.008 260);
+  --foreground: oklch(0.96 0.003 260);
+  --card: oklch(0.2 0.01 260);
+  --card-foreground: oklch(0.96 0.003 260);
+  --popover: oklch(0.22 0.01 260);
+  --popover-foreground: oklch(0.96 0.003 260);
+  --primary: oklch(0.68 0.15 260);
+  --primary-foreground: oklch(0.16 0.008 260);
+  --secondary: oklch(0.26 0.01 260);
+  --secondary-foreground: oklch(0.96 0.003 260);
+  --muted: oklch(0.26 0.01 260);
+  --muted-foreground: oklch(0.7 0.012 260);
+  --accent: oklch(0.28 0.012 260);
+  --accent-foreground: oklch(0.96 0.003 260);
+  --destructive: oklch(0.66 0.2 25);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 14%);
+  --ring: oklch(0.68 0.15 260);
+  /* Тёмная тема: свои шаги тех же оттенков, проверены против тёмного фона (CVD ΔE 10.2; текст 8–9.5:1) */
+  --chart-profit: oklch(0.54 0.14 180);
+  --chart-loss: oklch(0.64 0.19 40);
+  --chart-neutral: oklch(0.3 0.008 260);
+  --chart-grid: oklch(1 0 0 / 9%);
+  --profit: oklch(0.78 0.12 175);
+  --loss: oklch(0.76 0.14 38);
+}
+
+@theme inline {
+  --font-sans: "Inter", "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Mono", Consolas, ui-monospace, monospace;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-profit: var(--profit);
+  --color-loss: var(--loss);
+  --color-chart-profit: var(--chart-profit);
+  --color-chart-loss: var(--chart-loss);
+  --color-chart-neutral: var(--chart-neutral);
+  --color-chart-grid: var(--chart-grid);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground font-sans;
+  }
+  /* Цифры одинаковой ширины — колонки с ценами не «прыгают» */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Текст постов Telegram: ссылки, цитаты, код; тикеры — ссылки в калькулятор */
+.news-html a {
+  color: var(--primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.news-html a.ticker-link {
+  text-decoration: none;
+  font-weight: 600;
+  border-radius: 4px;
+  padding: 0 3px;
+  background: color-mix(in oklch, var(--primary) 12%, transparent);
+}
+.news-html a.ticker-link:hover {
+  background: color-mix(in oklch, var(--primary) 22%, transparent);
+}
+.news-html blockquote {
+  border-left: 3px solid var(--border);
+  padding-left: 0.75rem;
+  color: var(--muted-foreground);
+}
+.news-html code,
+.news-html pre {
+  font-family: var(--font-mono);
+  font-size: 0.875em;
+  background: var(--muted);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+
+@utility no-scrollbar {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}

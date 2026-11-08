@@ -1,0 +1,427 @@
+// Схема БД. Деньги и цены — Decimal; время — UTC (отображение в Europe/Moscow).
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------- Пользователи и авторизация (таблицы Better Auth) ----------
+
+model User {
+  id            String   @id @default(cuid())
+  email         String   @unique
+  emailVerified Boolean  @default(false)
+  name          String
+  image         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  sessions      Session[]
+  authAccounts  AuthAccount[]
+  settings      UserSettings?
+  connections   BrokerConnection[]
+  tradePlans    TradePlan[]
+  importPresets ImportPreset[]
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+}
+
+/// Способ входа пользователя. Для email/пароля providerId = "credential", password — хэш argon2id.
+model AuthAccount {
+  id                    String    @id @default(cuid())
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  providerId            String
+  accountId             String
+  password              String?
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@unique([providerId, accountId])
+  @@index([userId])
+}
+
+/// Токены подтверждения email и сброса пароля.
+model Verification {
+  id         String   @id @default(cuid())
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+}
+
+/// Значения калькулятора по умолчанию.
+model UserSettings {
+  userId        String  @id
+  user          User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  depositRub    Decimal @default(100000) @db.Decimal(20, 2)
+  riskPct       Decimal @default(1) @db.Decimal(6, 3)
+  rewardRatio   Decimal @default(3) @db.Decimal(6, 2)
+  commissionPct Decimal @default(0.05) @db.Decimal(6, 4)
+}
+
+// ---------- Брокеры ----------
+
+enum BrokerType {
+  TINVEST
+  FINAM
+  ALOR
+  FILE
+}
+
+enum ConnectionStatus {
+  ACTIVE
+  ERROR
+  REVOKED
+}
+
+model BrokerConnection {
+  id              String           @id @default(cuid())
+  userId          String
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  broker          BrokerType
+  label           String
+  /// version(1) | iv(12) | tag(16) | ciphertext — AES-256-GCM. Никогда не отдаётся на фронт.
+  tokenCipher     Bytes?
+  tokenKeyVersion Int?
+  tokenLast4      String?
+  status          ConnectionStatus @default(ACTIVE)
+  lastSyncAt      DateTime?
+  lastSyncError   String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  accounts BrokerAccount[]
+  syncRuns SyncRun[]
+
+  @@index([userId])
+}
+
+model BrokerAccount {
+  id              String           @id @default(cuid())
+  connectionId    String
+  connection      BrokerConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  externalId      String
+  name            String
+  isEnabled       Boolean          @default(true)
+  /// Начальный капитал для кривой капитала (обязателен для импорта из файла)
+  startingCapital Decimal?         @db.Decimal(20, 2)
+  syncCursor      String?
+  syncedUntil     DateTime?
+  createdAt       DateTime         @default(now())
+
+  executions Execution[]
+  cashOps    CashOperation[]
+  trades     Trade[]
+
+  @@unique([connectionId, externalId])
+}
+
+enum SyncKind {
+  FULL
+  INCREMENTAL
+  FILE
+}
+
+enum SyncStatus {
+  QUEUED
+  RUNNING
+  SUCCESS
+  FAILED
+}
+
+model SyncRun {
+  id           String           @id @default(cuid())
+  connectionId String
+  connection   BrokerConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  kind         SyncKind
+  status       SyncStatus       @default(QUEUED)
+  startedAt    DateTime         @default(now())
+  finishedAt   DateTime?
+  /// { executions: n, cashOps: n, trades: n }
+  stats        Json?
+  error        String?
+
+  @@index([connectionId, startedAt])
+}
+
+/// Сохранённый маппинг колонок файла брокерского отчёта.
+model ImportPreset {
+  id      String @id @default(cuid())
+  userId  String
+  user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name    String
+  /// { date: "Дата сделки", price: "Цена", ... }
+  mapping Json
+  /// разделитель, формат даты, десятичный разделитель, кодировка
+  options Json
+
+  @@index([userId])
+}
+
+// ---------- Инструменты (MOEX ISS + брокер) ----------
+
+enum AssetClass {
+  SHARE
+  BOND
+  ETF
+  FUTURE
+  CURRENCY
+  OTHER
+}
+
+model Instrument {
+  id            String     @id @default(cuid())
+  /// Тикер MOEX (SECID)
+  secid         String
+  /// Режим торгов: TQBR, TQCB, RFUD, CETS...
+  board         String
+  assetClass    AssetClass
+  shortName     String
+  name          String
+  isin          String?
+  figi          String?    @unique
+  tinvestUid    String?    @unique
+  currency      String     @default("RUB")
+  lotSize       Int
+  minStep       Decimal    @db.Decimal(24, 9)
+  /// Стоимость шага цены (фьючерсы)
+  stepPrice     Decimal?   @db.Decimal(24, 9)
+  /// Номинал (облигации: цена в % от номинала)
+  faceValue     Decimal?   @db.Decimal(20, 4)
+  /// Гарантийное обеспечение (ГО)
+  initialMargin Decimal?   @db.Decimal(20, 2)
+  expiresAt     DateTime?
+  decimals      Int        @default(2)
+  /// Цена закрытия (для фьючерсов — расчётная цена) предыдущей сессии: запасной вариант, если нет котировки
+  prevPrice     Decimal?   @db.Decimal(24, 9)
+  prevPriceDate DateTime?  @db.Date
+  logoName      String?
+  logoPath      String?
+  isTraded      Boolean    @default(true)
+  specUpdatedAt DateTime   @updatedAt
+
+  executions Execution[]
+  cashOps    CashOperation[]
+  trades     Trade[]
+  tradePlans TradePlan[]
+
+  @@unique([secid, board])
+  @@index([secid])
+  @@index([secid(ops: raw("gin_trgm_ops")), shortName(ops: raw("gin_trgm_ops")), name(ops: raw("gin_trgm_ops"))], type: Gin, map: "Instrument_search_trgm_idx")
+}
+
+// ---------- Исходные данные дневника ----------
+
+enum Side {
+  BUY
+  SELL
+}
+
+/// Одно исполнение заявки (fill).
+model Execution {
+  id              String        @id @default(cuid())
+  accountId       String
+  account         BrokerAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  instrumentId    String
+  instrument      Instrument    @relation(fields: [instrumentId], references: [id])
+  /// id операции брокера или хэш строки файла — ключ идемпотентности
+  externalId      String
+  side            Side
+  executedAt      DateTime
+  price           Decimal       @db.Decimal(24, 9)
+  /// Штуки (для фьючерсов — контракты)
+  quantity        Decimal       @db.Decimal(24, 6)
+  lots            Decimal       @db.Decimal(24, 6)
+  /// НКД
+  accruedInterest Decimal?      @db.Decimal(20, 4)
+  brokerFee       Decimal       @default(0) @db.Decimal(20, 4)
+  exchangeFee     Decimal       @default(0) @db.Decimal(20, 4)
+  currency        String        @default("RUB")
+
+  legs TradeLeg[]
+
+  @@unique([accountId, externalId])
+  @@index([accountId, instrumentId, executedAt])
+}
+
+enum CashOpType {
+  DEPOSIT
+  WITHDRAWAL
+  DIVIDEND
+  COUPON
+  AMORTIZATION
+  VARMARGIN
+  TAX
+  FEE
+  OTHER
+}
+
+/// Неторговые денежные операции: пополнения, выводы, дивиденды, купоны, вармаржа, налоги.
+model CashOperation {
+  id           String        @id @default(cuid())
+  accountId    String
+  account      BrokerAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  instrumentId String?
+  instrument   Instrument?   @relation(fields: [instrumentId], references: [id])
+  externalId   String
+  type         CashOpType
+  /// Со знаком: + поступление, − списание
+  amountRub    Decimal       @db.Decimal(20, 4)
+  currency     String        @default("RUB")
+  occurredAt   DateTime
+  description  String?
+
+  @@unique([accountId, externalId])
+  @@index([accountId, occurredAt])
+}
+
+// ---------- Производные данные: пересобираются из Execution ----------
+
+enum Direction {
+  LONG
+  SHORT
+}
+
+/// Завершённая сделка (round-trip): позиция от нуля до нуля.
+model Trade {
+  /// Детерминированный id: hash(account, instrument, первое исполнение)
+  id            String        @id
+  accountId     String
+  account       BrokerAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  instrumentId  String
+  instrument    Instrument    @relation(fields: [instrumentId], references: [id])
+  direction     Direction
+  openedAt      DateTime
+  closedAt      DateTime
+  /// Дата закрытия по Москве — для календаря и группировок
+  closedDateMsk DateTime      @db.Date
+  quantity      Decimal       @db.Decimal(24, 6)
+  lots          Decimal       @db.Decimal(24, 6)
+  avgEntry      Decimal       @db.Decimal(24, 9)
+  avgExit       Decimal       @db.Decimal(24, 9)
+  fees          Decimal       @db.Decimal(20, 4)
+  grossPnl      Decimal       @db.Decimal(20, 4)
+  netPnl        Decimal       @db.Decimal(20, 4)
+  returnPct     Decimal       @db.Decimal(12, 6)
+  holdingSec    Int
+
+  legs TradeLeg[]
+
+  @@index([accountId, closedAt])
+  @@index([accountId, instrumentId, closedAt])
+}
+
+enum LegRole {
+  ENTRY
+  EXIT
+}
+
+/// Часть исполнения, вошедшая в сделку (сопоставление FIFO).
+model TradeLeg {
+  id          String    @id @default(cuid())
+  tradeId     String
+  trade       Trade     @relation(fields: [tradeId], references: [id], onDelete: Cascade)
+  executionId String
+  execution   Execution @relation(fields: [executionId], references: [id], onDelete: Cascade)
+  role        LegRole
+  quantity    Decimal   @db.Decimal(24, 6)
+  feeShare    Decimal   @db.Decimal(20, 4)
+
+  @@index([tradeId])
+  @@index([executionId])
+}
+
+// ---------- Калькулятор ----------
+
+enum PlanStatus {
+  PLANNED
+  EXECUTED
+  CANCELLED
+}
+
+model TradePlan {
+  id           String     @id @default(cuid())
+  userId       String
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  instrumentId String
+  instrument   Instrument @relation(fields: [instrumentId], references: [id])
+  direction    Direction
+  depositRub   Decimal    @db.Decimal(20, 2)
+  riskPct      Decimal    @db.Decimal(6, 3)
+  entryPrice   Decimal    @db.Decimal(24, 9)
+  stopPrice    Decimal    @db.Decimal(24, 9)
+  takePrice    Decimal    @db.Decimal(24, 9)
+  rewardRatio  Decimal    @db.Decimal(6, 2)
+  lots         Int
+  riskRub      Decimal    @db.Decimal(20, 2)
+  profitRub    Decimal    @db.Decimal(20, 2)
+  feesRub      Decimal    @default(0) @db.Decimal(20, 2)
+  note         String?
+  status       PlanStatus @default(PLANNED)
+  createdAt    DateTime   @default(now())
+
+  @@index([userId, createdAt])
+}
+
+// ---------- Новости ----------
+
+model NewsPost {
+  id          String      @id @default(cuid())
+  channel     String
+  messageId   Int
+  publishedAt DateTime
+  editedAt    DateTime?
+  /// Очищенный HTML
+  html        String
+  /// Плоский текст для поиска
+  text        String
+  tickers     String[]
+  fetchedAt   DateTime    @default(now())
+
+  media NewsMedia[]
+
+  @@unique([channel, messageId])
+  @@index([publishedAt(sort: Desc)])
+  @@index([text(ops: raw("gin_trgm_ops"))], type: Gin, map: "NewsPost_text_trgm_idx")
+}
+
+model NewsMedia {
+  id         String   @id @default(cuid())
+  postId     String
+  post       NewsPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  /// photo | video_thumb
+  kind       String
+  sourceUrl  String
+  /// Локальная копия: ссылки CDN Telegram со временем перестают работать
+  storedPath String?
+  width      Int?
+  height     Int?
+
+  @@index([postId])
+}

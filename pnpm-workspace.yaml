@@ -1,0 +1,12 @@
+allowBuilds:
+  sharp: false
+  unrs-resolver: false
+  "@embedded-postgres/windows-x64": true
+  "@embedded-postgres/linux-x64": true
+  "@prisma/engines": true
+  esbuild: true
+  prisma: true
+
+overrides:
+  'exceljs>uuid': 11.1.1
+  'minimatch@10': 11.0.1
